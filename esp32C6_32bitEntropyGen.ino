@@ -10,6 +10,8 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_bt.h>              // Bluetooth controller shutdown
+#include <esp_ieee802154.h>      // Zigbee / IEEE 802.15.4 radio shutdown
 #include "bootloader_random.h"
 #include "mbedtls/sha256.h"
 
@@ -32,9 +34,11 @@ void setup() {
   Serial.begin(BAUD_RATE);
   while (!Serial) { delay(1); }   // Wait for USB CDC enumeration
 
-  // Enforce air-gap: disable the RF subsystem completely before enabling
-  // the hardware RNG so there is no possibility of RF-influenced entropy.
-  WiFi.mode(WIFI_OFF);
+  // Enforce air-gap: disable ALL RF subsystems before enabling the hardware
+  // RNG so there is no possibility of any wireless-influenced entropy.
+  WiFi.mode(WIFI_OFF);                  // Disable WiFi
+  esp_bt_controller_disable();          // Disable Bluetooth & BLE
+  esp_ieee802154_disable();             // Disable Zigbee / 802.15.4 radio
 
   // Enable the internal SAR ADC entropy source.
   // This routes physical noise on the analogue front-end into esp_random(),
