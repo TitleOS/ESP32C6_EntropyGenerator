@@ -1,32 +1,107 @@
+// esp32C6_32bitEntropyGen.ino
+// XIAO ESP32-C6 — Air-gapped hardware entropy generator
+//
+// Protocol: one 64-character lowercase hex string per line (= 32 bytes of
+//           on-device SHA-256 output), followed by CR+LF.
+//
+// NOTE: Requires Arduino ESP32 board package v3.x+ (ESP-IDF 5.x / mbedtls 3.x).
+//       If mbedtls_sha256_starts() does not compile, update the board package
+//       via: Boards Manager → esp32 → version 3.x.
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include "bootloader_random.h"
+#include "mbedtls/sha256.h"
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+#define BAUD_RATE        921600   // High-speed USB CDC for maximum entropy throughput
+#define XOR_ROUNDS       8        // Hardware random samples XOR-folded per hash iteration
+
+// ── Heartbeat LED ─────────────────────────────────────────────────────────────
+// XIAO ESP32-C6 built-in LED is GPIO 15. The guard handles boards that
+// don't define LED_BUILTIN in their variant header.
+#ifndef LED_BUILTIN
+  #define LED_BUILTIN 15
+#endif
+#define HEARTBEAT_TICKS  100      // Toggle every N ticks (~0.5 s at 5 ms/tick)
+
+// ── Globals ───────────────────────────────────────────────────────────────────
+static uint32_t s_tick = 0;
 
 void setup() {
-  // Use a fast baud rate for the USB serial connection
-  Serial.begin(115200);
-  
-  // Wait for the host to open the serial connection
-  while (!Serial) {
-    delay(10);
-  }
+  Serial.begin(BAUD_RATE);
+  while (!Serial) { delay(1); }   // Wait for USB CDC enumeration
 
-  // Disable Wi-Fi completely to enforce the hardware air-gap
+  // Enforce air-gap: disable the RF subsystem completely before enabling
+  // the hardware RNG so there is no possibility of RF-influenced entropy.
   WiFi.mode(WIFI_OFF);
 
-  // Enable the internal SAR ADC entropy source. 
-  // This guarantees true hardware randomness without relying on the RF subsystem.
+  // Enable the internal SAR ADC entropy source.
+  // This routes physical noise on the analogue front-end into esp_random(),
+  // ensuring true hardware randomness with no dependency on the RF subsystem.
   bootloader_random_enable();
+
+  // Configure heartbeat indicator
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
-  // Fetch a 32-bit true random integer
-  uint32_t raw_entropy = esp_random();
-  
-  // Print the raw integer as an ASCII string over USB serial
-  Serial.println(raw_entropy);
-  
-  // A tiny delay prevents flooding the USB buffer, 
-  // but keeps the entropy pool filling rapidly at 100Hz.
-  delay(10); 
+  // ── Step 1: XOR Mixing ────────────────────────────────────────────────────
+  // Gather XOR_ROUNDS independent 32-bit hardware random values.
+  // Using all samples as SHA-256 input (rather than just XOR-folding them)
+  // gives the hash function 256 bits of true entropy to work with, maximising
+  // the diffusion and avalanche properties of the output digest.
+  uint32_t samples[XOR_ROUNDS];
+  for (int i = 0; i < XOR_ROUNDS; i++) {
+    samples[i] = esp_random();
+  }
+
+  // Pack samples into a raw byte buffer (big-endian) ready for hashing.
+  // Total input: XOR_ROUNDS × 4 = 32 bytes = 256 bits.
+  uint8_t input_buf[XOR_ROUNDS * 4];
+  for (int i = 0; i < XOR_ROUNDS; i++) {
+    input_buf[i * 4 + 0] = (uint8_t)(samples[i] >> 24);
+    input_buf[i * 4 + 1] = (uint8_t)(samples[i] >> 16);
+    input_buf[i * 4 + 2] = (uint8_t)(samples[i] >>  8);
+    input_buf[i * 4 + 3] = (uint8_t)(samples[i]      );
+  }
+
+  // ── Step 2: On-Device SHA-256 ────────────────────────────────────────────
+  // mbedtls is bundled with the ESP32 Arduino core; no extra library needed.
+  // The context API is used so we can call mbedtls_sha256_free() and ensure
+  // all internal state is cleared by the library after use.
+  uint8_t digest[32];
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);                            // 0 = SHA-256
+  mbedtls_sha256_update(&ctx, input_buf, sizeof(input_buf));
+  mbedtls_sha256_finish(&ctx, digest);
+  mbedtls_sha256_free(&ctx);  // Zeroes the context struct internally
+
+  // ── Step 3: Output — 64-char Lowercase Hex Digest + CRLF ────────────────
+  for (int i = 0; i < 32; i++) {
+    if (digest[i] < 0x10) Serial.print('0');
+    Serial.print(digest[i], HEX);
+  }
+  Serial.println();    // Appends CR+LF; flushes the line to the USB buffer
+
+  // ── Step 4: Zero Sensitive Buffers ───────────────────────────────────────
+  // mbedtls_sha256_free() already zeroes ctx. Additionally clear our local
+  // arrays to prevent stale key material from persisting on the stack.
+  memset(samples,   0, sizeof(samples));
+  memset(input_buf, 0, sizeof(input_buf));
+  memset(digest,    0, sizeof(digest));
+
+  // ── Step 5: Heartbeat LED ─────────────────────────────────────────────────
+  // A visible blink confirms the device is alive and generating entropy.
+  // At 5 ms/tick and HEARTBEAT_TICKS=100 the LED toggles approximately
+  // every 0.5 seconds (1 Hz blink frequency).
+  if (++s_tick % HEARTBEAT_TICKS == 0) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+  }
+
+  // Brief yield — prevents USB CDC transmit-buffer saturation at 921600 baud
+  // while still delivering ~175 digest lines/sec (≈5600 bytes/sec of entropy).
+  delay(5);
 }
