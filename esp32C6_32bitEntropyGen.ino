@@ -10,8 +10,6 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <esp_bt.h>              // Bluetooth controller shutdown
-#include <esp_ieee802154.h>      // Zigbee / IEEE 802.15.4 radio shutdown
 #include "bootloader_random.h"
 #include "mbedtls/sha256.h"
 
@@ -34,11 +32,11 @@ static uint32_t s_tick = 0;
 void setup() {
   Serial.begin(BAUD_RATE);
 
-  // Enforce air-gap: disable ALL RF subsystems before enabling the hardware
-  // RNG so there is no possibility of any wireless-influenced entropy.
+  // Enforce air-gap: disable WiFi. By default, Bluetooth and Zigbee are
+  // uninitialized in this Arduino core unless their specific libraries are
+  // included and started. Attempting to disable them explicitly without
+  // initialization causes a modem_clock reference counter assertion failure.
   WiFi.mode(WIFI_OFF);                  // Disable WiFi
-  esp_bt_controller_disable();          // Disable Bluetooth & BLE
-  esp_ieee802154_disable();             // Disable Zigbee / 802.15.4 radio
 
   // Enable the internal SAR ADC entropy source.
   // This routes physical noise on the analogue front-end into esp_random(),
