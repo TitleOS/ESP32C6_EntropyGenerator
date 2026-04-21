@@ -7,8 +7,8 @@ The host-side Python toolchain uses this entropy to generate **AES-256**,
 **RSA** (2048–4096-bit), and **ECC** (Ed25519, P-256, P-384) key material —
 or serves raw entropy bytes over a socket in **daemon mode**.
 
-Wi-Fi is disabled at boot and never re-enabled, ensuring no RF-influenced
-randomness and a true hardware air-gap from all wireless networks.
+All RF radios (Wi-Fi, Bluetooth, and Zigbee) are disabled at boot and never re-enabled,
+ensuring no RF-influenced randomness and a true hardware air-gap from all wireless networks.
 
 ---
 
@@ -39,13 +39,13 @@ pip install pyserial pycryptodome
 
 | Step | Detail |
 |---|---|
-| **Air-gap** | `WiFi.mode(WIFI_OFF)` disables the RF subsystem before RNG is enabled |
+| **Air-gap** | Explicit disable commands for Wi-Fi, BT, and Zigbee before RNG is enabled |
 | **Entropy source** | `bootloader_random_enable()` activates the internal SAR ADC TRNG |
 | **XOR mixing** | Eight independent `esp_random()` calls are packed into a 32-byte buffer |
 | **On-device SHA-256** | The buffer is hashed with mbedtls to produce a 32-byte digest |
 | **Output** | 64-char lowercase hex string + CRLF per line at **921600 baud** |
 | **Buffer zeroing** | `memset()` clears all sensitive arrays after each digest is sent |
-| **Heartbeat LED** | Built-in LED blinks at ~1 Hz to confirm liveness |
+| **Heartbeat LED** | Built-in LED blinks slowly (~1 Hz) when idle, and rapidly (~10 Hz) when being sampled |
 
 ### Protocol
 
@@ -208,7 +208,7 @@ The wire protocol is intentionally minimal:
 ## Security Notes
 
 - **Private key permissions**: On Linux/macOS all `.pem` and `.key` files are set to `0o600` immediately after writing. On Windows, ensure the output directory ACLs are appropriately restricted.
-- **Air-gap**: The firmware calls `WiFi.mode(WIFI_OFF)` before enabling the hardware RNG. Do not upload firmware that re-enables Wi-Fi while using this device for key generation.
+- **Air-gap**: The firmware disables all RF radios (Wi-Fi, Bluetooth, Zigbee) before enabling the hardware RNG. Do not upload firmware that re-enables any wireless radios while using this device for key generation.
 - **Log file**: File logging is disabled by default. Avoid enabling `--logfile` with verbose settings if the log path is on a shared or networked filesystem.
 - **Daemon socket**: The Unix socket is created with mode `0o600` (root/owner only). The TCP daemon binds to `127.0.0.1` (loopback only) and should not be exposed to a network interface.
 - **Memory hygiene**: All internal `bytearray` entropy accumulators are explicitly zeroed after use. Python immutable `bytes` / `str` objects holding PEM output cannot be cleared; for the highest-assurance use cases, generate keys on a dedicated air-gapped machine and immediately write to encrypted storage.

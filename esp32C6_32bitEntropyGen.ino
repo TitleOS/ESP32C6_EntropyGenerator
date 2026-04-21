@@ -25,14 +25,14 @@
 #ifndef LED_BUILTIN
   #define LED_BUILTIN 15
 #endif
-#define HEARTBEAT_TICKS  100      // Toggle every N ticks (~0.5 s at 5 ms/tick)
+#define HEARTBEAT_IDLE_TICKS    100      // Toggle every ~0.5 s when idle
+#define HEARTBEAT_ACTIVE_TICKS  10       // Toggle every ~0.05 s when sampling
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 static uint32_t s_tick = 0;
 
 void setup() {
   Serial.begin(BAUD_RATE);
-  while (!Serial) { delay(1); }   // Wait for USB CDC enumeration
 
   // Enforce air-gap: disable ALL RF subsystems before enabling the hardware
   // RNG so there is no possibility of any wireless-influenced entropy.
@@ -51,6 +51,16 @@ void setup() {
 }
 
 void loop() {
+  if (!Serial) {
+    // ── Idle State ──────────────────────────────────────────────────────────
+    // Host is not connected. Flash the LED slowly to signal the device is alive.
+    if (++s_tick % HEARTBEAT_IDLE_TICKS == 0) {
+      digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    }
+    delay(5);
+    return;
+  }
+
   // ── Step 1: XOR Mixing ────────────────────────────────────────────────────
   // Gather XOR_ROUNDS independent 32-bit hardware random values.
   // Using all samples as SHA-256 input (rather than just XOR-folding them)
@@ -97,11 +107,9 @@ void loop() {
   memset(input_buf, 0, sizeof(input_buf));
   memset(digest,    0, sizeof(digest));
 
-  // ── Step 5: Heartbeat LED ─────────────────────────────────────────────────
-  // A visible blink confirms the device is alive and generating entropy.
-  // At 5 ms/tick and HEARTBEAT_TICKS=100 the LED toggles approximately
-  // every 0.5 seconds (1 Hz blink frequency).
-  if (++s_tick % HEARTBEAT_TICKS == 0) {
+  // ── Step 5: Active Heartbeat LED ──────────────────────────────────────────
+  // A visible rapid blink confirms the device is actively generating entropy.
+  if (++s_tick % HEARTBEAT_ACTIVE_TICKS == 0) {
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
   }
 
