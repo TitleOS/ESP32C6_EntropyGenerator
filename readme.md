@@ -41,3 +41,6 @@ python hsm_generator.py --type both --outdir ./keys --port COM3
 This will produce `aes_256.key`, `rsa_4096_priv.pem`, and `rsa_4096_pub.pem` inside the specified directory using pure hardware entropy streamed directly from the XIAO ESP32C6.
 
 AES-256 keys can be generated in under a second on modern systems, while an RSA-4096 pair takes roughly 330 seconds on my system.
+
+## 3D Printed Case
+I personally 3d printed this [case](https://www.printables.com/model/1137008-esp32-c3c6h2s3-super-mini-case) and puttied the small case with vented lid to the side of my Proxmox node, making the RNG easily and constantly accessible. 
